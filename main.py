@@ -82,6 +82,7 @@ def parse_option():
 
 
 def main(config):
+    print("================= main ================")
     dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)
 
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
@@ -96,6 +97,7 @@ def main(config):
 
     model.cuda()
     model_without_ddp = model
+    print(model)
 
     optimizer = build_optimizer(config, model)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
@@ -295,6 +297,9 @@ def throughput(data_loader, model, logger):
 
 if __name__ == '__main__':
     args, config = parse_option()
+    print(args)
+    print("-------------")
+    print(config)
 
     if config.AMP_OPT_LEVEL:
         print("[warning] Apex amp has been deprecated, please use pytorch amp instead!")

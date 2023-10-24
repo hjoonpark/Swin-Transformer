@@ -22,7 +22,6 @@ except:
     WindowProcessReverse = None
     print("[Warning] Fused window process have not been installed. Please refer to get_started.md for installation.")
 
-
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
@@ -34,13 +33,13 @@ class Mlp(nn.Module):
         self.drop = nn.Dropout(drop)
 
     def forward(self, x):
+        print("===== Mlp forward ===================")
         x = self.fc1(x)
         x = self.act(x)
         x = self.drop(x)
         x = self.fc2(x)
         x = self.drop(x)
         return x
-
 
 def window_partition(x, window_size):
     """
@@ -51,11 +50,14 @@ def window_partition(x, window_size):
     Returns:
         windows: (num_windows*B, window_size, window_size, C)
     """
+    print("----- window_partition ----- window_size:", window_size)
+    print(x.shape)
     B, H, W, C = x.shape
     x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
+    print(x.shape)
     windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
+    print("windows:", windows.shape)
     return windows
-
 
 def window_reverse(windows, window_size, H, W):
     """
@@ -123,36 +125,49 @@ class WindowAttention(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, x, mask=None):
+        print("===== WindowAttention forward ===================")
         """
         Args:
             x: input features with shape of (num_windows*B, N, C)
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
+        print("  WindowAttention in:", x.shape)
         B_, N, C = x.shape
         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
-
+        print("  qkv:", qkv.shape)
+        q, k, v = qkv[0], qkv[1], qkv[2] # make torchscript happy (cannot use tensor as tuple)
+        print("q: {}, k: {}, v: {}".format(q.shape, k.shape, v.shape))
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
+        print("  attn:", attn.shape)
 
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
+        print("  relative_position_bias:", relative_position_bias.shape)
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+        print("  relative_position_bias:", relative_position_bias.shape)
         attn = attn + relative_position_bias.unsqueeze(0)
 
         if mask is not None:
+            print("mask is not None")
+            print("mask:", mask.shape)
             nW = mask.shape[0]
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            print("attn:", attn.shape)
             attn = attn.view(-1, self.num_heads, N, N)
+            print("attn:", attn.shape)
             attn = self.softmax(attn)
         else:
+            print("mask is None")
             attn = self.softmax(attn)
 
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        print("  attn @ v:", x.shape)
         x = self.proj(x)
         x = self.proj_drop(x)
+        print("  x after proj:", x.shape)
         return x
 
     def extra_repr(self) -> str:
@@ -246,6 +261,8 @@ class SwinTransformerBlock(nn.Module):
         self.fused_window_process = fused_window_process
 
     def forward(self, x):
+        print("===== SwinTransformerBlock forward ===================")
+        print(x.shape)
         H, W = self.input_resolution
         B, L, C = x.shape
         assert L == H * W, "input feature has wrong size"
@@ -255,19 +272,27 @@ class SwinTransformerBlock(nn.Module):
         x = x.view(B, H, W, C)
 
         # cyclic shift
-        if self.shift_size > 0:
+        print("self.shift_size:", self.shift_size)
+        if self.shift_size > 0: 
+            print("path 1")
             if not self.fused_window_process:
+                print("path 1a")
                 shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+                print("x:", x.shape, ", shifted_x:", shifted_x.shape)
                 # partition windows
                 x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
             else:
+                print("path 1b")
                 x_windows = WindowProcess.apply(x, B, H, W, C, -self.shift_size, self.window_size)
         else:
+            print("path 2")
             shifted_x = x
+            print("x:", x.shape, ", shifted_x:", shifted_x.shape)
             # partition windows
             x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
-
+        print("x_windows:", x_windows.shape)
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+        print("x_windows view:", x_windows.shape)
 
         # W-MSA/SW-MSA
         attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
@@ -329,6 +354,7 @@ class PatchMerging(nn.Module):
         self.norm = norm_layer(4 * dim)
 
     def forward(self, x):
+        print("===== PatchMerging forward ===================")
         """
         x: B, H*W, C
         """
@@ -413,13 +439,19 @@ class BasicLayer(nn.Module):
             self.downsample = None
 
     def forward(self, x):
-        for blk in self.blocks:
+        print("===== BasicLayer forward ===================")
+        print(x.shape)
+        for i, blk in enumerate(self.blocks):
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x)
             else:
+                print(f"  {i} SwinTransformerBlock in: {x.shape}")
                 x = blk(x)
+                print(f"  {i} SwinTransformerBlock out: {x.shape}")
+            print()
         if self.downsample is not None:
             x = self.downsample(x)
+            print(f"  downsampled: {x.shape}")
         return x
 
     def extra_repr(self) -> str:
@@ -465,11 +497,13 @@ class PatchEmbed(nn.Module):
             self.norm = None
 
     def forward(self, x):
+        print("===== PatchEmbed forward ===================")
         B, C, H, W = x.shape
         # FIXME look at relaxing size constraints
         assert H == self.img_size[0] and W == self.img_size[1], \
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
         x = self.proj(x).flatten(2).transpose(1, 2)  # B Ph*Pw C
+
         if self.norm is not None:
             x = self.norm(x)
         return x
@@ -600,6 +634,7 @@ class SwinTransformer(nn.Module):
         return x
 
     def forward(self, x):
+        print("(1) SwinTransformer forward ===================")
         x = self.forward_features(x)
         x = self.head(x)
         return x
