@@ -75,10 +75,6 @@ class WindowAttention(nn.Module):
         coords = torch.stack(torch.meshgrid([coords_h, coords_w])) # 2, Wh, Ww
         coords_flatten = torch.flatten(coords, 1) # 2, Wh*Ww
         relative_coords = (coords_flatten[:, :, None] - coords_flatten[:, None, :]).permute(1, 2, 0).contiguous() # 2, Wh*Ww, Wh*Ww -> Wh*Ww, Wh*Ww, 2
-        print("coords:")
-        print(coords)
-        print("relative_coords:")
-        print(relative_coords)
         relative_coords[:,:,0] += window_size[0] - 1 # shift to start from 0
         relative_coords[:,:,1] += window_size[1] - 1
         relative_coords[:,:,0] *= 2*window_size[1] - 1
@@ -100,6 +96,7 @@ class WindowAttention(nn.Module):
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
 
+        # https://youtu.be/Ws2RAh_VDyU
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
                     self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
@@ -210,6 +207,7 @@ class SwinTransformerBlock(nn.Module):
 
         # W-MSA/SW-MSA
         attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+        if self.attn_mask is not None:
 
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
@@ -284,9 +282,13 @@ class PatchEmbed(nn.Module):
             self.norm = norm_layer(embed_dim)
         else:
             self.norm = None
+
     def forward(self, x):
         B, C, H, W = x.shape
-        x = self.proj(x).flatten(2).transpose(1, 2)  # B Ph*Pw C
+        x = self.proj(x)
+        print("proj x:", x.shape)
+        x = x.flatten(2).transpose(1, 2)  # B Ph*Pw C
+
 
         if self.norm is not None:
             x = self.norm(x)
@@ -311,7 +313,7 @@ class SwinTransformer(nn.Module):
         
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))] # stochastic depth decay rule
-        print("dpr:", dpr)
+        # print("dpr:", dpr)
 
         # stages
         self.num_layers = len(depths) # = 4 stages
@@ -353,8 +355,12 @@ class SwinTransformer(nn.Module):
         x = self.patch_embed(x)
         x = self.pos_drop(x)
 
-        for layer in self.layers:
+        print("initial:", x.shape)
+        for i, layer in enumerate(self.layers):
+            print(f"  layer {i} input: {x.shape}")
             x = layer(x)
+            print(f"  layer {i} output: {x.shape}")
+            print()
 
         x = self.norm(x)  # B L C
         x = self.avgpool(x.transpose(1, 2))  # B C 1
